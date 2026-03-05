@@ -1,0 +1,17 @@
+# Go
+singbox-panel-*
+*.tar.gz
+go.sum
+
+# Node
+web/node_modules/
+web/dist/
+
+# Panel data
+/data/
+*.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
