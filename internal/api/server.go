@@ -35,6 +35,11 @@ func (s *Server) Run(addr string) error {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.Default()
 
+	// 必须关闭，否则 Gin 路由引擎会在 NoRoute 执行前
+	// 对未注册路径发出 301，导致死循环
+	r.RedirectTrailingSlash = false
+	r.RedirectFixedPath = false
+
 	r.Use(cors.New(cors.Config{
 		AllowOrigins:     []string{"*"},
 		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
@@ -99,25 +104,25 @@ func (s *Server) Run(addr string) error {
 	}
 	httpFS := http.FS(distFS)
 
-	r.NoRoute(func(c *gin.Context) {
-		path := c.Request.URL.Path
-		// 去掉开头的 /，embed.FS 路径不能以 / 开头
-		cleanPath := path[1:]
+	// 静态文件 handler：先找真实文件，找不到就返回 index.html（SPA 路由）
+	spaHandler := func(c *gin.Context) {
+		cleanPath := c.Request.URL.Path[1:] // 去掉开头的 /
 		if cleanPath == "" {
 			cleanPath = "index.html"
 		}
-
-		// 尝试直接找静态文件
 		f, err := distFS.Open(cleanPath)
 		if err == nil {
 			f.Close()
 			c.FileFromFS(cleanPath, httpFS)
 			return
 		}
-
-		// 文件不存在，回退 index.html（Vue Router history 模式）
 		c.FileFromFS("index.html", httpFS)
-	})
+	}
+
+	// 必须显式注册 /，否则 Gin 不会走 NoRoute 处理根路径
+	r.GET("/", spaHandler)
+	// 其余所有未匹配路径（/login /dashboard /assets/xxx 等）
+	r.NoRoute(spaHandler)
 
 	return r.Run(addr)
 }
