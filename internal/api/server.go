@@ -13,11 +13,11 @@ import (
 )
 
 type Server struct {
-	dataDir  string
-	webFS    embed.FS
-	cfg      *config.Manager
-	coreMgr  *core.Manager
-	fwMgr    *firewall.Manager
+	dataDir string
+	webFS   embed.FS
+	cfg     *config.Manager
+	coreMgr *core.Manager
+	fwMgr   *firewall.Manager
 }
 
 func NewServer(dataDir string, webFS embed.FS) *Server {
@@ -92,18 +92,27 @@ func (s *Server) Run(addr string) error {
 		}
 	}
 
-	// Serve embedded Vue SPA
+	// 服务内嵌的 Vue SPA
 	distFS, err := fs.Sub(s.webFS, "dist")
-	if err == nil {
-		r.NoRoute(func(c *gin.Context) {
-			// Try static file first, fallback to index.html for SPA routing
-			path := c.Request.URL.Path
-			if path == "/" || path == "" {
-				path = "/index.html"
-			}
-			c.FileFromFS(path, http.FS(distFS))
-		})
+	if err != nil {
+		panic("embedded dist/ not found, please build frontend first: cd web && npm run build")
 	}
+	httpFS := http.FS(distFS)
+
+	r.NoRoute(func(c *gin.Context) {
+		path := c.Request.URL.Path
+
+		// 尝试直接找静态文件
+		f, err := distFS.Open(path[1:]) // 去掉开头的 /
+		if err == nil {
+			f.Close()
+			c.FileFromFS(path, httpFS)
+			return
+		}
+
+		// 文件不存在，回退 index.html（Vue Router 的 history 模式需要）
+		c.FileFromFS("/index.html", httpFS)
+	})
 
 	return r.Run(addr)
 }
