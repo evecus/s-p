@@ -83,9 +83,6 @@ func (s *Server) Run(addr string) error {
 	}
 
 	// 服务内嵌的 Vue SPA
-	// 用 http.FileServer + fs.Sub，绝对不用 FileFromFS
-	// FileFromFS 内部修改 URL.Path 后交给 http.FileServer，
-	// 而 http.FileServer 对不以 / 开头的路径会发 301，导致死循环
 	distFS, err := fs.Sub(s.webFS, "dist")
 	if err != nil {
 		panic("embedded dist/ not found")
@@ -94,17 +91,28 @@ func (s *Server) Run(addr string) error {
 	fileServer := http.FileServer(http.FS(distFS))
 
 	spaHandler := func(c *gin.Context) {
-		path := c.Request.URL.Path[1:] // 去掉开头的 /
+		urlPath := c.Request.URL.Path
 
-		// 检查文件是否存在于 embed.FS
-		_, err := distFS.Open(path)
-		if err != nil {
-			// 文件不存在（Vue Router 路由），改写路径到 index.html
-			c.Request.URL.Path = "/"
+		// 去掉开头的 / 后检查文件是否存在于 embed.FS
+		trimmed := urlPath
+		if len(trimmed) > 0 && trimmed[0] == '/' {
+			trimmed = trimmed[1:]
+		}
+		if trimmed == "" {
+			trimmed = "index.html"
 		}
 
-		// 用标准 http.FileServer 服务，它会正确处理 Content-Type、缓存头等
-		// URL.Path 以 / 开头，http.FileServer 不会再发 301
+		_, openErr := distFS.Open(trimmed)
+		if openErr != nil {
+			// Vue Router 路由页面，返回 index.html
+			// 注意：不修改 URL.Path，而是克隆请求并改路径
+			req := c.Request.Clone(c.Request.Context())
+			req.URL.Path = "/"
+			fileServer.ServeHTTP(c.Writer, req)
+			return
+		}
+
+		// 静态文件直接服务，保持原始 URL.Path
 		fileServer.ServeHTTP(c.Writer, c.Request)
 	}
 
