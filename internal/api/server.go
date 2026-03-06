@@ -1,16 +1,16 @@
 package api
 
 import (
-	"embed"
-	"io/fs"
-	"net/http"
-	"strings"
+    "embed"
+    "io/fs"
+    "net/http"
+    "strings"
 
-	"github.com/gin-contrib/cors"
-	"github.com/gin-gonic/gin"
-	"github.com/singbox-panel/internal/config"
-	"github.com/singbox-panel/internal/core"
-	"github.com/singbox-panel/internal/firewall"
+    "github.com/gin-contrib/cors"
+    "github.com/gin-gonic/gin"
+    "github.com/singbox-panel/internal/config"
+    "github.com/singbox-panel/internal/core"
+    "github.com/singbox-panel/internal/firewall"
 )
 
 type Server struct {
