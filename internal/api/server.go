@@ -1,155 +1,109 @@
-name: Build & Release
+package api
 
-on:
-  push:
-    tags: ['v*.*.*']
-  workflow_dispatch:
-    inputs:
-      version:
-        description: 'Version tag (e.g. v1.0.0)'
-        required: false
-        default: 'dev'
+import (
+	"embed"
+	"io/fs"
+	"net/http"
 
-permissions:
-  contents: write
+	"github.com/gin-contrib/cors"
+	"github.com/gin-gonic/gin"
+	"github.com/singbox-panel/internal/config"
+	"github.com/singbox-panel/internal/core"
+	"github.com/singbox-panel/internal/firewall"
+)
 
-jobs:
-  build-web:
-    name: Build Vue3 Frontend
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
+type Server struct {
+	dataDir  string
+	webFS    embed.FS
+	cfg      *config.Manager
+	coreMgr  *core.Manager
+	fwMgr    *firewall.Manager
+}
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
+func NewServer(dataDir string, webFS embed.FS) *Server {
+	cfgMgr := config.NewManager(dataDir)
+	return &Server{
+		dataDir: dataDir,
+		webFS:   webFS,
+		cfg:     cfgMgr,
+		coreMgr: core.NewManager(dataDir, cfgMgr),
+		fwMgr:   firewall.NewManager(dataDir),
+	}
+}
 
-      - name: Install dependencies
-        working-directory: web
-        run: npm install
+func (s *Server) Run(addr string) error {
+	gin.SetMode(gin.ReleaseMode)
+	r := gin.Default()
 
-      - name: Build frontend
-        working-directory: web
-        run: npm run build
+	r.Use(cors.New(cors.Config{
+		AllowOrigins:     []string{"*"},
+		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
+		AllowCredentials: true,
+	}))
 
-      - name: Upload dist artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: web-dist
-          path: cmd/panel/dist/
-          retention-days: 1
+	// API routes
+	api := r.Group("/api")
+	{
+		// Auth
+		auth := api.Group("/auth")
+		auth.GET("/status", s.authStatus)
+		auth.POST("/setup", s.authSetup)
+		auth.POST("/login", s.authLogin)
 
-  build-go:
-    name: Build Go Binary (${{ matrix.target }})
-    needs: build-web
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        include:
-          - goos: linux
-            goarch: amd64
-            target: linux-amd64
-          - goos: linux
-            goarch: arm64
-            target: linux-arm64
+		// Protected routes
+		protected := api.Group("/")
+		protected.Use(s.jwtMiddleware())
+		{
+			// System
+			protected.GET("/system/info", s.systemInfo)
+			protected.GET("/system/status", s.systemStatus)
 
-    steps:
-      - uses: actions/checkout@v4
+			// Core (sing-box binary)
+			protected.GET("/core/info", s.coreInfo)
+			protected.POST("/core/download", s.coreDownload)
+			protected.GET("/core/download/progress", s.coreDownloadProgress)
+			protected.POST("/core/start", s.coreStart)
+			protected.POST("/core/stop", s.coreStop)
+			protected.POST("/core/restart", s.coreRestart)
+			protected.GET("/core/logs", s.coreLogs)
 
-      - name: Setup Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.22'
-          cache: true
+			// Config
+			protected.GET("/config/raw", s.configGetRaw)
+			protected.PUT("/config/raw", s.configSetRaw)
+			protected.GET("/config/sections", s.configGetSections)
+			protected.PUT("/config/sections/:section", s.configSetSection)
+			protected.POST("/config/validate", s.configValidate)
 
-      - name: Download web dist
-        uses: actions/download-artifact@v4
-        with:
-          name: web-dist
-          path: cmd/panel/dist/
+			// Providers
+			protected.GET("/providers", s.providersGet)
+			protected.PUT("/providers", s.providersSet)
+			protected.POST("/providers/:tag/update", s.providerUpdate)
 
-      - name: Download Go dependencies
-        run: go mod download
+			// Firewall / Proxy Mode
+			protected.GET("/proxy/mode", s.proxyModeGet)
+			protected.POST("/proxy/apply", s.proxyApply)
+			protected.POST("/proxy/stop", s.proxyStop)
+			protected.GET("/proxy/status", s.proxyStatus)
 
-      - name: Build binary
-        env:
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
-          GOARM: ${{ matrix.goarm }}
-          CGO_ENABLED: 0
-        run: |
-          VERSION=${{ github.ref_name || inputs.version || 'dev' }}
-          BUILD_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-          go build \
-            -ldflags="-s -w -X main.Version=${VERSION} -X main.BuildTime=${BUILD_TIME}" \
-            -trimpath \
-            -o singbox-panel-${{ matrix.target }} \
-            ./cmd/panel
+			// Rule sets
+			protected.GET("/rulesets", s.rulesetsGet)
+			protected.POST("/rulesets/update", s.rulesetsUpdate)
+		}
+	}
 
-      - name: Compress binary
-        run: |
-          tar czf singbox-panel-${{ matrix.target }}.tar.gz singbox-panel-${{ matrix.target }}
+	// Serve embedded Vue SPA
+	distFS, err := fs.Sub(s.webFS, "dist")
+	if err == nil {
+		r.NoRoute(func(c *gin.Context) {
+			// Try static file first, fallback to index.html for SPA routing
+			path := c.Request.URL.Path
+			if path == "/" || path == "" {
+				path = "/index.html"
+			}
+			c.FileFromFS(path, http.FS(distFS))
+		})
+	}
 
-      - name: Upload binary artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: singbox-panel-${{ matrix.target }}
-          path: |
-            singbox-panel-${{ matrix.target }}
-            singbox-panel-${{ matrix.target }}.tar.gz
-
-  release:
-    name: Create GitHub Release
-    needs: build-go
-    runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/')
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: artifacts/
-          pattern: singbox-panel-*
-          merge-multiple: true
-
-      - name: Generate checksums
-        run: |
-          cd artifacts
-          sha256sum singbox-panel-*.tar.gz > SHA256SUMS.txt
-          cat SHA256SUMS.txt
-
-      - name: Create Release
-        uses: softprops/action-gh-release@v2
-        with:
-          name: "Singbox Panel ${{ github.ref_name }}"
-          body: |
-            ## Singbox Panel ${{ github.ref_name }}
-
-            ### 下载
-
-            | 平台 | 架构 | 下载 |
-            |------|------|------|
-            | Linux | amd64 (x86_64) | `singbox-panel-linux-amd64.tar.gz` |
-            | Linux | arm64 (aarch64) | `singbox-panel-linux-arm64.tar.gz` |
-            | Linux | armv7 | `singbox-panel-linux-armv7.tar.gz` |
-
-            ### 快速安装
-
-            ```bash
-            # 下载（以 amd64 为例）
-            wget https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/singbox-panel-linux-amd64.tar.gz
-            tar xzf singbox-panel-linux-amd64.tar.gz
-            chmod +x singbox-panel-linux-amd64
-            sudo ./singbox-panel-linux-amd64
-            # 访问 http://<IP>:8080
-            ```
-
-            ### 变更日志
-            ${{ github.event.head_commit.message }}
-          files: |
-            artifacts/singbox-panel-*.tar.gz
-            artifacts/SHA256SUMS.txt
-          draft: false
-          prerelease: false
+	return r.Run(addr)
+}
