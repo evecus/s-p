@@ -95,9 +95,12 @@ jobs:
             -o singbox-panel-${{ matrix.target }} \
             ./cmd/panel
 
-      - name: Compress binary
+      - name: Package release
         run: |
-          tar czf singbox-panel-${{ matrix.target }}.tar.gz singbox-panel-${{ matrix.target }}
+          mkdir -p release
+          cp singbox-panel-${{ matrix.target }} release/singbox-panel
+          cp -r cmd/panel/dist release/dist
+          tar czf singbox-panel-${{ matrix.target }}.tar.gz -C release .
 
       - name: Upload binary artifact
         uses: actions/upload-artifact@v4
