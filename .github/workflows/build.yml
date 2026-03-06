@@ -90,8 +90,9 @@ jobs:
             ./cmd/panel
 
       - name: Compress binary
-        run: |
-          tar czf singbox-panel-${{ matrix.target }}.tar.gz singbox-panel-${{ matrix.target }}
+        # tag 触发时才压缩
+        if: startsWith(github.ref, 'refs/tags/')
+        run: tar czf singbox-panel-${{ matrix.target }}.tar.gz singbox-panel-${{ matrix.target }}
 
       - name: Upload binary artifact
         uses: actions/upload-artifact@v4
@@ -99,13 +100,14 @@ jobs:
           name: singbox-panel-${{ matrix.target }}
           path: |
             singbox-panel-${{ matrix.target }}
-            singbox-panel-${{ matrix.target }}.tar.gz
+            ${{ startsWith(github.ref, 'refs/tags/') && format('singbox-panel-{0}.tar.gz', matrix.target) || '' }}
 
   release:
     name: Create GitHub Release
     needs: build-go
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/')
+    # tag 和 workflow_dispatch 都发 release
+    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
     steps:
       - uses: actions/checkout@v4
 
@@ -116,33 +118,43 @@ jobs:
           pattern: singbox-panel-*
           merge-multiple: true
 
+      - name: List artifacts
+        run: ls -lh artifacts/
+
       - name: Generate checksums
         run: |
           cd artifacts
-          sha256sum singbox-panel-*.tar.gz > SHA256SUMS.txt
+          sha256sum singbox-panel-* > SHA256SUMS.txt
           cat SHA256SUMS.txt
+
+      - name: Set release tag
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "tag=${{ inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            echo "tag=${{ github.ref_name }}" >> $GITHUB_OUTPUT
+          fi
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          name: "Singbox Panel ${{ github.ref_name }}"
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: "Singbox Panel ${{ steps.tag.outputs.tag }}"
           body: |
-            ## Singbox Panel ${{ github.ref_name }}
+            ## Singbox Panel ${{ steps.tag.outputs.tag }}
 
             ### 下载
 
             | 平台 | 架构 | 下载 |
             |------|------|------|
-            | Linux | amd64 (x86_64) | `singbox-panel-linux-amd64.tar.gz` |
-            | Linux | arm64 (aarch64) | `singbox-panel-linux-arm64.tar.gz` |
-            | Linux | armv7 | `singbox-panel-linux-armv7.tar.gz` |
+            | Linux | amd64 (x86_64) | `singbox-panel-linux-amd64` |
+            | Linux | arm64 (aarch64) | `singbox-panel-linux-arm64` |
 
             ### 快速安装
 
             ```bash
-            # 下载（以 amd64 为例）
-            wget https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/singbox-panel-linux-amd64.tar.gz
-            tar xzf singbox-panel-linux-amd64.tar.gz
+            wget https://github.com/${{ github.repository }}/releases/download/${{ steps.tag.outputs.tag }}/singbox-panel-linux-amd64
             chmod +x singbox-panel-linux-amd64
             sudo ./singbox-panel-linux-amd64
             # 访问 http://<IP>:8080
@@ -150,8 +162,6 @@ jobs:
 
             ### 变更日志
             ${{ github.event.head_commit.message }}
-          files: |
-            artifacts/singbox-panel-*.tar.gz
-            artifacts/SHA256SUMS.txt
+          files: artifacts/singbox-panel-*
           draft: false
-          prerelease: false
+          prerelease: ${{ github.event_name == 'workflow_dispatch' }}
