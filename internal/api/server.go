@@ -35,8 +35,6 @@ func (s *Server) Run(addr string) error {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.Default()
 
-	// 必须关闭，否则 Gin 路由引擎会在 NoRoute 执行前
-	// 对未注册路径发出 301，导致死循环
 	r.RedirectTrailingSlash = false
 	r.RedirectFixedPath = false
 
@@ -50,21 +48,16 @@ func (s *Server) Run(addr string) error {
 	// API routes
 	api := r.Group("/api")
 	{
-		// Auth
 		auth := api.Group("/auth")
 		auth.GET("/status", s.authStatus)
 		auth.POST("/setup", s.authSetup)
 		auth.POST("/login", s.authLogin)
 
-		// Protected routes
 		protected := api.Group("/")
 		protected.Use(s.jwtMiddleware())
 		{
-			// System
 			protected.GET("/system/info", s.systemInfo)
 			protected.GET("/system/status", s.systemStatus)
-
-			// Core (sing-box binary)
 			protected.GET("/core/info", s.coreInfo)
 			protected.POST("/core/download", s.coreDownload)
 			protected.GET("/core/download/progress", s.coreDownloadProgress)
@@ -72,56 +65,50 @@ func (s *Server) Run(addr string) error {
 			protected.POST("/core/stop", s.coreStop)
 			protected.POST("/core/restart", s.coreRestart)
 			protected.GET("/core/logs", s.coreLogs)
-
-			// Config
 			protected.GET("/config/raw", s.configGetRaw)
 			protected.PUT("/config/raw", s.configSetRaw)
 			protected.GET("/config/sections", s.configGetSections)
 			protected.PUT("/config/sections/:section", s.configSetSection)
 			protected.POST("/config/validate", s.configValidate)
-
-			// Providers
 			protected.GET("/providers", s.providersGet)
 			protected.PUT("/providers", s.providersSet)
 			protected.POST("/providers/:tag/update", s.providerUpdate)
-
-			// Firewall / Proxy Mode
 			protected.GET("/proxy/mode", s.proxyModeGet)
 			protected.POST("/proxy/apply", s.proxyApply)
 			protected.POST("/proxy/stop", s.proxyStop)
 			protected.GET("/proxy/status", s.proxyStatus)
-
-			// Rule sets
 			protected.GET("/rulesets", s.rulesetsGet)
 			protected.POST("/rulesets/update", s.rulesetsUpdate)
 		}
 	}
 
 	// 服务内嵌的 Vue SPA
+	// 用 http.FileServer + fs.Sub，绝对不用 FileFromFS
+	// FileFromFS 内部修改 URL.Path 后交给 http.FileServer，
+	// 而 http.FileServer 对不以 / 开头的路径会发 301，导致死循环
 	distFS, err := fs.Sub(s.webFS, "dist")
 	if err != nil {
-		panic("embedded dist/ not found, please build frontend first: cd web && npm run build")
+		panic("embedded dist/ not found")
 	}
-	httpFS := http.FS(distFS)
 
-	// 静态文件 handler：先找真实文件，找不到就返回 index.html（SPA 路由）
+	fileServer := http.FileServer(http.FS(distFS))
+
 	spaHandler := func(c *gin.Context) {
-		cleanPath := c.Request.URL.Path[1:] // 去掉开头的 /
-		if cleanPath == "" {
-			cleanPath = "index.html"
+		path := c.Request.URL.Path[1:] // 去掉开头的 /
+
+		// 检查文件是否存在于 embed.FS
+		_, err := distFS.Open(path)
+		if err != nil {
+			// 文件不存在（Vue Router 路由），改写路径到 index.html
+			c.Request.URL.Path = "/"
 		}
-		f, err := distFS.Open(cleanPath)
-		if err == nil {
-			f.Close()
-			c.FileFromFS(cleanPath, httpFS)
-			return
-		}
-		c.FileFromFS("index.html", httpFS)
+
+		// 用标准 http.FileServer 服务，它会正确处理 Content-Type、缓存头等
+		// URL.Path 以 / 开头，http.FileServer 不会再发 301
+		fileServer.ServeHTTP(c.Writer, c.Request)
 	}
 
-	// 必须显式注册 /，否则 Gin 不会走 NoRoute 处理根路径
 	r.GET("/", spaHandler)
-	// 其余所有未匹配路径（/login /dashboard /assets/xxx 等）
 	r.NoRoute(spaHandler)
 
 	return r.Run(addr)
