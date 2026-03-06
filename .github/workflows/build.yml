@@ -69,8 +69,10 @@ jobs:
           name: web-dist
           path: cmd/panel/dist/
 
-      - name: Download Go dependencies
-        run: go mod download
+      - name: Tidy and Download dependencies
+        run: |
+          go mod tidy
+          go mod download
 
       - name: Build binary
         env:
