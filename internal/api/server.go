@@ -101,17 +101,22 @@ func (s *Server) Run(addr string) error {
 
 	r.NoRoute(func(c *gin.Context) {
 		path := c.Request.URL.Path
+		// 去掉开头的 /，embed.FS 路径不能以 / 开头
+		cleanPath := path[1:]
+		if cleanPath == "" {
+			cleanPath = "index.html"
+		}
 
 		// 尝试直接找静态文件
-		f, err := distFS.Open(path[1:]) // 去掉开头的 /
+		f, err := distFS.Open(cleanPath)
 		if err == nil {
 			f.Close()
-			c.FileFromFS(path, httpFS)
+			c.FileFromFS(cleanPath, httpFS)
 			return
 		}
 
-		// 文件不存在，回退 index.html（Vue Router 的 history 模式需要）
-		c.FileFromFS("/index.html", httpFS)
+		// 文件不存在，回退 index.html（Vue Router history 模式）
+		c.FileFromFS("index.html", httpFS)
 	})
 
 	return r.Run(addr)
