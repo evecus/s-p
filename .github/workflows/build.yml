@@ -24,8 +24,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          #cache: 'npm'
-          #cache-dependency-path: web/package-lock.json
 
       - name: Install dependencies
         working-directory: web
@@ -55,10 +53,6 @@ jobs:
           - goos: linux
             goarch: arm64
             target: linux-arm64
-          - goos: linux
-            goarch: arm
-            goarm: 7
-            target: linux-armv7
 
     steps:
       - uses: actions/checkout@v4
@@ -76,9 +70,7 @@ jobs:
           path: cmd/panel/dist/
 
       - name: Download Go dependencies
-        run: |
-          go mod tidy
-          go mod download
+        run: go mod download
 
       - name: Build binary
         env:
@@ -95,12 +87,9 @@ jobs:
             -o singbox-panel-${{ matrix.target }} \
             ./cmd/panel
 
-      - name: Package release
+      - name: Compress binary
         run: |
-          mkdir -p release
-          cp singbox-panel-${{ matrix.target }} release/singbox-panel
-          cp -r cmd/panel/dist release/dist
-          tar czf singbox-panel-${{ matrix.target }}.tar.gz -C release .
+          tar czf singbox-panel-${{ matrix.target }}.tar.gz singbox-panel-${{ matrix.target }}
 
       - name: Upload binary artifact
         uses: actions/upload-artifact@v4
