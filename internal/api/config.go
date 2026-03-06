@@ -41,7 +41,8 @@ func (s *Server) configGetSections(c *gin.Context) {
 
 func (s *Server) configSetSection(c *gin.Context) {
 	section := c.Param("section")
-	var body map[string]interface{}
+	// 用 interface{} 接收，兼容对象（route/dns等）和数组（inbounds/outbounds等）
+	var body interface{}
 	if err := c.ShouldBindJSON(&body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
