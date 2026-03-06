@@ -3,7 +3,8 @@
 @tailwind utilities;
 
 @layer base {
-  body { @apply antialiased; }
+  html { @apply bg-gray-950; }
+  body { @apply antialiased bg-gray-950 text-gray-100; }
   ::-webkit-scrollbar { @apply w-1.5 h-1.5; }
   ::-webkit-scrollbar-track { @apply bg-gray-900; }
   ::-webkit-scrollbar-thumb { @apply bg-gray-600 rounded-full; }
