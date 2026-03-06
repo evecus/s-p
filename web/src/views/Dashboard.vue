@@ -176,6 +176,6 @@ onUnmounted(() => clearInterval(timer))
 
 <style scoped>
 .quick-btn {
-  @apply flex flex-col items-center gap-2 p-4 rounded-xl bg-gray-800 hover:bg-gray-750 border border-gray-700 hover:border-gray-600 transition-colors cursor-pointer text-gray-300 hover:text-white;
+  @apply flex flex-col items-center gap-2 p-4 rounded-xl bg-gray-800 hover:bg-gray-700 border border-gray-700 hover:border-gray-600 transition-colors cursor-pointer text-gray-300 hover:text-white;
 }
 </style>
