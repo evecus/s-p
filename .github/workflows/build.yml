@@ -76,7 +76,9 @@ jobs:
           path: cmd/panel/dist/
 
       - name: Download Go dependencies
-        run: go mod download
+        run: |
+          go mod tidy
+          go mod download
 
       - name: Build binary
         env:
